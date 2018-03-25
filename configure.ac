@@ -23,6 +23,8 @@ AC_PROG_MAKE_SET
 CHECK_RAGEL([mordor/uri.cpp], [6.0])
 AC_CHECK_PROG([PROTOC], [protoc], [protoc])
 
+AX_CHECK_COMPILE_FLAG([-std=gnu++14], [CXXFLAGS="$CXXFLAGS -std=gnu++14"])
+
 # Checks for libraries.
 AC_SEARCH_LIBS([pthread_create], [pthread])
 AC_SEARCH_LIBS([clock_gettime], [rt])
@@ -42,6 +44,7 @@ AX_CHECK_COREFOUNDATION_FRAMEWORK
 AX_CHECK_SECURITY_FRAMEWORK
 AX_CHECK_SYSTEMCONFIGURATION_FRAMEWORK
 AX_LIB_POSTGRESQL
+AX_LIB_HIREDIS
 AM_CONDITIONAL([HAVE_BOOST_PROGRAM_OPTIONS], [test "x${BOOST_PROGRAM_OPTIONS_LIB}" != x])
 AM_CONDITIONAL([HAVE_POSTGRESQL], [test "x${POSTGRESQL_VERSION}" != x])
 AC_ARG_WITH(yaml,
@@ -73,7 +76,10 @@ AS_IF([test "x$with_protobuf" = xyes],
 	[PKG_CHECK_MODULES([PROTOBUF], [protobuf])],
 	[test "x$with_protobuf" = xcheck],
 	[PKG_CHECK_MODULES([PROTOBUF], [protobuf], [], [true])])
-AM_CONDITIONAL([HAVE_PROTOBUF], [test "x${PROTOBUF_CFLAGS}" != x])
+PKG_CHECK_MODULES([PROTOBUF], [protobuf],
+                  [AM_CONDITIONAL(HAVE_PROTOBUF, true)],
+                  [AM_CONDITIONAL(HAVE_PROTOBUF, false)])
+
 
 # Checks for header files.
 AC_CHECK_HEADERS([fcntl.h netdb.h netinet/in.h stddef.h stdint.h stdlib.h string.h sys/socket.h sys/time.h syslog.h])
@@ -105,6 +111,7 @@ AC_CONFIG_FILES([Makefile
 				 mordor/libmordorprotobuf.pc
 				 mordor/libmordoryaml.pc
                  mordor/pq/libmordorpq.pc
+                 mordor/redis/libmordorredis.pc
                  mordor/test/libmordortest.pc])
 AC_OUTPUT
 

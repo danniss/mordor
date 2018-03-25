@@ -103,7 +103,7 @@ IOManager::AsyncState::AsyncState()
 IOManager::AsyncState::~AsyncState()
 {
     boost::mutex::scoped_lock lock(m_mutex);
-    MORDOR_ASSERT(!m_events);
+    MORDOR_NOTHROW_ASSERT(!m_events);
 }
 
 IOManager::AsyncState::EventContext &
@@ -168,8 +168,8 @@ IOManager::AsyncState::resetContext(EventContext &context)
     context.dg = NULL;
 }
 
-IOManager::IOManager(size_t threads, bool useCaller, bool autoStart)
-    : Scheduler(threads, useCaller),
+IOManager::IOManager(size_t threads, bool useCaller, bool autoStart, size_t batchSize)
+    : Scheduler(threads, useCaller, batchSize),
       m_pendingEventCount(0)
 {
     m_epfd = epoll_create(5000);
@@ -191,6 +191,13 @@ IOManager::IOManager(size_t threads, bool useCaller, bool autoStart)
     event.events = EPOLLIN | EPOLLET;
     event.data.fd = m_tickleFds[0];
     rc = fcntl(m_tickleFds[0], F_SETFL, O_NONBLOCK);
+    if (rc == -1) {
+        close(m_tickleFds[0]);
+        close(m_tickleFds[1]);
+        close(m_epfd);
+        MORDOR_THROW_EXCEPTION_FROM_LAST_ERROR_API("fcntl");
+    }
+    rc = fcntl(m_tickleFds[1], F_SETFL, O_NONBLOCK);
     if (rc == -1) {
         close(m_tickleFds[0]);
         close(m_tickleFds[1]);
@@ -264,7 +271,7 @@ IOManager::registerEvent(int fd, Event event, boost::function<void ()> dg)
 
     boost::mutex::scoped_lock lock2(state.m_mutex);
 
-    MORDOR_ASSERT(!(state.m_events & event));
+    //MORDOR_ASSERT(!(state.m_events & event));
     int op = state.m_events ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
     epoll_event epevent;
     epevent.events = EPOLLET | state.m_events | event;
@@ -279,9 +286,9 @@ IOManager::registerEvent(int fd, Event event, boost::function<void ()> dg)
     atomicIncrement(m_pendingEventCount);
     state.m_events = (Event)(state.m_events | event);
     AsyncState::EventContext &context = state.contextForEvent(event);
-    MORDOR_ASSERT(!context.scheduler);
-    MORDOR_ASSERT(!context.fiber);
-    MORDOR_ASSERT(!context.dg);
+    //MORDOR_ASSERT(!context.scheduler);
+    //MORDOR_ASSERT(!context.fiber);
+    //MORDOR_ASSERT(!context.dg);
     context.scheduler = Scheduler::getThis();
     if (dg) {
         context.dg.swap(dg);
@@ -410,10 +417,13 @@ IOManager::idle()
         for(int i = 0; i < rc; ++i) {
             epoll_event &event = events[i];
             if (event.data.fd == m_tickleFds[0]) {
-                unsigned char dummy;
+                unsigned char dummy[256];
                 int rc2;
-                while((rc2 = read(m_tickleFds[0], &dummy, 1)) == 1) {
-                    MORDOR_LOG_VERBOSE(g_log) << this << " received tickle";
+                // every tickle write only 1 byte
+                // but it does not have to be read by 1 byte
+                // try to read more to save read() syscall
+                while((rc2 = read(m_tickleFds[0], dummy, 256)) > 0) {
+                    MORDOR_LOG_VERBOSE(g_log) << this << " received " << rc2 << " tickles";
                 }
                 MORDOR_VERIFY(rc2 < 0 && errno == EAGAIN);
                 continue;
@@ -488,7 +498,7 @@ IOManager::tickle()
     int rc = write(m_tickleFds[1], "T", 1);
     MORDOR_LOG_VERBOSE(g_log) << this << " write(" << m_tickleFds[1] << ", 1): "
         << rc << " (" << lastError() << ")";
-    MORDOR_VERIFY(rc == 1);
+    MORDOR_VERIFY(rc == 1 || (rc < 0 && errno == EAGAIN));
 }
 
 }
